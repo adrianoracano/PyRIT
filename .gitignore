@@ -206,3 +206,6 @@ doc/_autosummary/
 # Impeccable skill local cache
 .impeccable/
 /pyrit/_compatibility.json
+
+# Claude Code personal, per-project settings (not for the fork)
+.claude/settings.local.json
