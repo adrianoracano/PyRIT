@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" || exit 0; git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/microsoft/PyRIT.git; for i in 1 2 3 4 5; do git fetch upstream --quiet 2>/dev/null && break; sleep 2; done; if [ \"$(git branch --show-current)\" = main ] && [ -z \"$(git status --porcelain --untracked-files=no)\" ]; then git merge --no-edit upstream/main >/dev/null 2>&1 || { git merge --abort 2>/dev/null; echo \"upstream merge has conflicts: resolve manually\"; }; fi; true",
+            "statusMessage": "Syncing main with upstream (microsoft/PyRIT)...",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
