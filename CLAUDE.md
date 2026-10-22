@@ -46,3 +46,12 @@ reason to stop.
   It adds a resilient retry layer for 5xx and connection errors, and results persist to the
   default SQLite DB, so runs show up in the CoPyRIT GUI. See the module docstring for the
   `llama-server` launch commands.
+
+- `scripts/run_attack_dataset.py` builds the adversarial-attack dataset (single- and multi-turn attacks
+  scored 1-10 by an LLM judge, thresholded at 0.7):
+  - target: llama.cpp at `127.0.0.1:8091` (8 slots)
+  - attacker and judge: Google Gemini API (OpenAI-compatible endpoint), using `$GEMINI_API_KEY`;
+    override with `--attacker` / `--judge`
+  - plans (`--plan pilot|trial|stage1|stage2`) are resumable per `run_id`: finished non-error jobs
+    are skipped. Output goes to `/home/user/attack_dataset/attacks_{run_id}.jsonl` (outside the repo);
+    each row records its attacker, judge and target, so rows from different judges can be told apart.
