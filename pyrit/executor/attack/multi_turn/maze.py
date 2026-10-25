@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import enum
 import logging
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -20,7 +19,7 @@ from pyrit.executor.attack.multi_turn.role_driven_attack import (
     RoleDrivenConversationAttack,
     TurnTrace,
 )
-from pyrit.models import ConversationReference, ConversationType, JsonSchemaDefinition, Message, SeedPrompt
+from pyrit.models import JsonSchemaDefinition, Message, SeedPrompt
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -523,13 +522,4 @@ class MazeAttack(RoleDrivenConversationAttack):
         if self._target_history is TargetHistory.FULL:
             await super()._prepare_target_conversation_async(context=context)
             return
-        if not context.history:
-            return
-        context.related_conversations.add(
-            ConversationReference(
-                conversation_id=context.session.conversation_id,
-                conversation_type=ConversationType.PRUNED,
-                description=f"target history disabled, prior turn {context.executed_turns}",
-            )
-        )
-        context.session.conversation_id = str(uuid.uuid4())
+        self._start_fresh_target_conversation(context=context, reason="target history disabled")

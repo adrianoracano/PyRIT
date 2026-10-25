@@ -61,6 +61,7 @@ EXECUTOR_RED_TEAM_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "red_teaming").
 EXECUTOR_SIMULATED_TARGET_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "simulated_target").resolve()
 EXECUTOR_MAZE_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "maze").resolve()
 EXECUTOR_RAMP_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "ramp").resolve()
+EXECUTOR_EMJO_PATH = pathlib.Path(EXECUTOR_SEED_PROMPT_PATH, "emjo").resolve()
 CONVERTER_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "converters").resolve()
 SCORER_SEED_PROMPT_PATH = pathlib.Path(DATASETS_PATH, "score").resolve()
 SCORER_CONTENT_CLASSIFIERS_PATH = pathlib.Path(SCORER_SEED_PROMPT_PATH, "content_classifiers").resolve()

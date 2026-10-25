@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         CrescendoAttackContext,
         CrescendoAttackResult,
     )
+    from pyrit.executor.attack.multi_turn.emjo import EmjoAttack, EmjoSystemPromptPaths
     from pyrit.executor.attack.multi_turn.maze import MazeAttack, MazeAttackContext, MazeSystemPromptPaths
     from pyrit.executor.attack.multi_turn.multi_prompt_sending import (
         MultiPromptSendingAttack,
@@ -52,6 +53,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CrescendoAttack": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackContext": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackResult": "pyrit.executor.attack.multi_turn.crescendo",
+    "EmjoAttack": "pyrit.executor.attack.multi_turn.emjo",
+    "EmjoSystemPromptPaths": "pyrit.executor.attack.multi_turn.emjo",
     "EmpiricalTransitioner": "pyrit.executor.attack.multi_turn.ramp_domain",
     "MazeAttack": "pyrit.executor.attack.multi_turn.maze",
     "MazeAttackContext": "pyrit.executor.attack.multi_turn.maze",

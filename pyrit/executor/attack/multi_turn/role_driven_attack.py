@@ -346,6 +346,21 @@ class RoleDrivenConversationAttack(MultiTurnAttackStrategy[RoleDrivenAttackConte
             response (Message): The objective target's response.
         """
 
+    async def _on_scored_async(
+        self, *, context: RoleDrivenAttackContext, run: Any, trace: TurnTrace, response: Message
+    ) -> None:
+        """
+        Learn from the objective score of the turn that was just played.
+
+        Called once the response has been scored, with ``context.last_score`` and ``trace.score_value`` set.
+
+        Args:
+            context (RoleDrivenAttackContext): The attack context.
+            run (Any): The run state from ``_begin_run``.
+            trace (TurnTrace): The trace of the turn that was just played.
+            response (Message): The objective target's response.
+        """
+
     def _stop_reason(self, *, context: RoleDrivenAttackContext, run: Any) -> str | None:
         """
         Say why the attack should stop before the turn budget is spent.
@@ -370,6 +385,27 @@ class RoleDrivenConversationAttack(MultiTurnAttackStrategy[RoleDrivenAttackConte
             context (RoleDrivenAttackContext): The attack context.
         """
         await self._rotate_conversation_for_single_turn_target_async(context=context)
+
+    def _start_fresh_target_conversation(self, *, context: RoleDrivenAttackContext, reason: str) -> None:
+        """
+        Move to a new objective-target conversation once an exchange has taken place.
+
+        The conversation that was left stays on the context as a pruned related conversation.
+
+        Args:
+            context (RoleDrivenAttackContext): The attack context.
+            reason (str): Why the conversation is not continued, recorded on the pruned reference.
+        """
+        if not context.history:
+            return
+        context.related_conversations.add(
+            ConversationReference(
+                conversation_id=context.session.conversation_id,
+                conversation_type=ConversationType.PRUNED,
+                description=f"{reason}, prior turn {context.executed_turns}",
+            )
+        )
+        context.session.conversation_id = str(uuid.uuid4())
 
     async def _perform_async(self, *, context: RoleDrivenAttackContext) -> AttackResult:
         """
@@ -403,6 +439,7 @@ class RoleDrivenConversationAttack(MultiTurnAttackStrategy[RoleDrivenAttackConte
             context.last_score = await self._score_response_async(context=context)
             achieved_objective = score_is_true(context.last_score)
             trace.score_value = self._score_value(context.last_score)
+            await self._on_scored_async(context=context, run=run, trace=trace, response=response)
             context.trace.append(trace)
             context.executed_turns += 1
             stop_reason = None if achieved_objective else self._stop_reason(context=context, run=run)
