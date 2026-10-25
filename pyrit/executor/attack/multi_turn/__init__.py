@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         CrescendoAttackContext,
         CrescendoAttackResult,
     )
+    from pyrit.executor.attack.multi_turn.maze import MazeAttack, MazeAttackContext, MazeSystemPromptPaths
     from pyrit.executor.attack.multi_turn.multi_prompt_sending import (
         MultiPromptSendingAttack,
         MultiPromptSendingAttackParameters,
@@ -26,6 +27,10 @@ if TYPE_CHECKING:
     )
     from pyrit.executor.attack.multi_turn.pair import PAIRAttack
     from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack, RTASystemPromptPaths
+    from pyrit.executor.attack.multi_turn.role_driven_attack import (
+        RoleDrivenAttackContext,
+        RoleDrivenConversationAttack,
+    )
     from pyrit.executor.attack.multi_turn.simulated_conversation import (
         SimulatedConversationResult,
         generate_simulated_conversation_async,
@@ -45,12 +50,17 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CrescendoAttack": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackContext": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackResult": "pyrit.executor.attack.multi_turn.crescendo",
+    "MazeAttack": "pyrit.executor.attack.multi_turn.maze",
+    "MazeAttackContext": "pyrit.executor.attack.multi_turn.maze",
+    "MazeSystemPromptPaths": "pyrit.executor.attack.multi_turn.maze",
     "MultiPromptSendingAttack": "pyrit.executor.attack.multi_turn.multi_prompt_sending",
     "MultiPromptSendingAttackParameters": "pyrit.executor.attack.multi_turn.multi_prompt_sending",
     "MultiTurnAttackContext": "pyrit.executor.attack.multi_turn.multi_turn_attack_strategy",
     "MultiTurnAttackStrategy": "pyrit.executor.attack.multi_turn.multi_turn_attack_strategy",
     "PAIRAttack": "pyrit.executor.attack.multi_turn.pair",
     "RTASystemPromptPaths": "pyrit.executor.attack.multi_turn.red_teaming",
+    "RoleDrivenAttackContext": "pyrit.executor.attack.multi_turn.role_driven_attack",
+    "RoleDrivenConversationAttack": "pyrit.executor.attack.multi_turn.role_driven_attack",
     "RedTeamingAttack": "pyrit.executor.attack.multi_turn.red_teaming",
     "SimulatedConversationResult": "pyrit.executor.attack.multi_turn.simulated_conversation",
     "TAPAttack": "pyrit.executor.attack.multi_turn.tree_of_attacks",
