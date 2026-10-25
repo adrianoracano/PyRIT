@@ -26,6 +26,8 @@ if TYPE_CHECKING:
         MultiTurnAttackStrategy,
     )
     from pyrit.executor.attack.multi_turn.pair import PAIRAttack
+    from pyrit.executor.attack.multi_turn.ramp import RampAttack, RampSystemPromptPaths
+    from pyrit.executor.attack.multi_turn.ramp_domain import EmpiricalTransitioner, RampStrategy, RuleTransitioner
     from pyrit.executor.attack.multi_turn.red_teaming import RedTeamingAttack, RTASystemPromptPaths
     from pyrit.executor.attack.multi_turn.role_driven_attack import (
         RoleDrivenAttackContext,
@@ -50,6 +52,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CrescendoAttack": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackContext": "pyrit.executor.attack.multi_turn.crescendo",
     "CrescendoAttackResult": "pyrit.executor.attack.multi_turn.crescendo",
+    "EmpiricalTransitioner": "pyrit.executor.attack.multi_turn.ramp_domain",
     "MazeAttack": "pyrit.executor.attack.multi_turn.maze",
     "MazeAttackContext": "pyrit.executor.attack.multi_turn.maze",
     "MazeSystemPromptPaths": "pyrit.executor.attack.multi_turn.maze",
@@ -59,6 +62,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MultiTurnAttackStrategy": "pyrit.executor.attack.multi_turn.multi_turn_attack_strategy",
     "PAIRAttack": "pyrit.executor.attack.multi_turn.pair",
     "RTASystemPromptPaths": "pyrit.executor.attack.multi_turn.red_teaming",
+    "RampAttack": "pyrit.executor.attack.multi_turn.ramp",
+    "RampStrategy": "pyrit.executor.attack.multi_turn.ramp_domain",
+    "RampSystemPromptPaths": "pyrit.executor.attack.multi_turn.ramp",
+    "RuleTransitioner": "pyrit.executor.attack.multi_turn.ramp_domain",
     "RoleDrivenAttackContext": "pyrit.executor.attack.multi_turn.role_driven_attack",
     "RoleDrivenConversationAttack": "pyrit.executor.attack.multi_turn.role_driven_attack",
     "RedTeamingAttack": "pyrit.executor.attack.multi_turn.red_teaming",

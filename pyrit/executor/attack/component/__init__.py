@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     )
     from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
     from pyrit.executor.attack.component.response_assessment import RefusalAssessor, TurnAssessment
+    from pyrit.executor.attack.component.risk_constrained_planner import Plan, RiskConstrainedPlanner
     from pyrit.executor.attack.component.structured_role import StructuredRole, parse_json_object
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -38,7 +39,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "mark_messages_as_simulated": "pyrit.executor.attack.component.conversation_manager",
     "parse_json_object": "pyrit.executor.attack.component.structured_role",
     "PrependedConversationConfig": "pyrit.executor.attack.component.prepended_conversation_config",
+    "Plan": "pyrit.executor.attack.component.risk_constrained_planner",
     "RefusalAssessor": "pyrit.executor.attack.component.response_assessment",
+    "RiskConstrainedPlanner": "pyrit.executor.attack.component.risk_constrained_planner",
     "StructuredRole": "pyrit.executor.attack.component.structured_role",
     "TurnAssessment": "pyrit.executor.attack.component.response_assessment",
 }
