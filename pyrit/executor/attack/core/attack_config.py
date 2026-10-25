@@ -19,8 +19,11 @@ DEFAULT_ADVERSARIAL_FIRST_MESSAGE = "Generate your first message to achieve: {{ 
 # Default per-turn template handed to the adversarial chat. The manager computes the actual
 # feedback text in Python (handling blocked/error/empty responses and optional score feedback)
 # and exposes it to the template as ``feedback_text``; the default simply renders it. Custom
-# templates may wrap ``feedback_text`` and reference ``objective``, and are rendered strictly, so
-# a reference to any other variable raises rather than silently producing empty output.
+# templates may wrap ``feedback_text`` and reference ``objective``, ``turn_index``, ``max_turns``,
+# ``response_text``, ``response_blocked``, ``response_errored``, ``score_value`` and
+# ``score_rationale``. ``RedTeamingAttack`` also supplies ``was_refusal`` (None unless a refusal scorer is
+# configured). They are rendered strictly, so a reference to any other variable raises rather than
+# silently producing empty output.
 DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE = "{{ feedback_text }}"
 
 
@@ -74,7 +77,8 @@ class AttackAdversarialConfig:
     first_message: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_FIRST_MESSAGE
 
     # Template rendered each turn to wrap the per-turn feedback text the manager computes from
-    # the objective target's latest response. Receives ``feedback_text`` and ``objective``.
+    # the objective target's latest response. Receives ``feedback_text``, ``objective`` and the turn
+    # variables listed above.
     adversarial_prompt_template: str | SeedPrompt | None = DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE
 
     # System prompt for the adversarial chat target, as an inline Jinja template string or a

@@ -17,9 +17,10 @@ description: |
      already-tested PyRIT behavior and changing it would mean a new executor.
   2. Per-turn follow-up prompt. GOAT's follow-up prompt (paper Figure A.3) re-supplies the
      attacker's own previous prompt (P) as an explicit field, alongside the goal and the target's
-     latest response. RedTeamingAttack's per-turn adversarial template only receives feedback_text
-     (built from the target's latest response, without judge feedback) and objective -- the
-     attacker's own previous prompt is not currently exposed to per-turn templates. This
+     latest response. RedTeamingAttack's per-turn adversarial template receives feedback_text
+     (built from the target's latest response, without judge feedback), objective and turn
+     variables -- the attacker's own previous prompt is not currently exposed to per-turn
+     templates. This
      technique's follow-up prompt (goat_follow_up_prompt.yaml) omits that field rather than
      approximate it, since the attacker's full prior reasoning already stays in the adversarial
      chat's own conversation history regardless.

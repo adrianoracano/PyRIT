@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
-from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import AdversarialChatResponseBlockedException, ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
@@ -19,6 +18,7 @@ from pyrit.executor.attack.component import (
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+from pyrit.executor.attack.component.response_assessment import RefusalAssessor, TurnAssessment
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
@@ -142,10 +142,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         if attack_scoring_config.objective_scorer is None:
             raise ValueError("Objective scorer must be provided in the attack scoring configuration.")
 
-        # Check for unused optional parameters and warn if they are set
-        warn_if_set(config=attack_scoring_config, log=self._logger, unused_fields=["refusal_scorer"])
-
         self._objective_scorer = attack_scoring_config.objective_scorer
+        self._refusal_assessor = (
+            RefusalAssessor(refusal_scorer=attack_scoring_config.refusal_scorer)
+            if attack_scoring_config.refusal_scorer is not None
+            else None
+        )
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._use_score_as_feedback = attack_scoring_config.use_score_as_feedback
 
@@ -214,6 +216,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         return AttackScoringConfig(
             objective_scorer=self._objective_scorer,
+            refusal_scorer=self._refusal_assessor.refusal_scorer if self._refusal_assessor is not None else None,
             auxiliary_scorers=self._auxiliary_scorers,
             use_score_as_feedback=self._use_score_as_feedback,
         )
@@ -402,6 +405,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 context=context, message=message_to_send
             )
 
+            context.last_assessment = await self._assess_response_async(context=context, message=message_to_send)
+
             # Determine if this is the last turn
             is_last_turn = context.executed_turns + 1 >= self._max_turns
 
@@ -529,8 +534,53 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             seed_message=seed_message,
             last_response=context.last_response,
             score=context.last_score,
+            template_values=self._build_template_values(context=context),
         )
         return turn.objective_message
+
+    def _build_template_values(self, *, context: MultiTurnAttackContext[Any]) -> dict[str, Any]:
+        """
+        Build the attack-specific variables for the adversarial per-turn template.
+
+        ``was_refusal`` is None whenever the latest response has not been assessed, which is always the
+        case when no refusal scorer is configured.
+
+        Args:
+            context (MultiTurnAttackContext): The attack context holding the latest assessment.
+
+        Returns:
+            dict[str, Any]: The template variables.
+        """
+        if context.last_assessment is None:
+            return {"was_refusal": None}
+        return context.last_assessment.template_values()
+
+    async def _assess_response_async(
+        self,
+        *,
+        context: MultiTurnAttackContext[Any],
+        message: Message,
+    ) -> TurnAssessment | None:
+        """
+        Assess whether the objective target refused the prompt it was just sent.
+
+        Args:
+            context (MultiTurnAttackContext): The attack context holding the latest response.
+            message (Message): The message that was sent to the objective target.
+
+        Returns:
+            TurnAssessment | None: The assessment, or None when no refusal scorer is configured or the
+                target returned no response.
+        """
+        if self._refusal_assessor is None or context.last_response is None:
+            return None
+        return await self._refusal_assessor.assess_async(
+            response=context.last_response,
+            prompt_sent=message.get_value(),
+            attack_strategy_name=self.__class__.__name__,
+            objective_target_conversation_id=context.session.conversation_id,
+            objective=context.objective,
+        )
 
     async def _send_prompt_to_objective_target_async(
         self,

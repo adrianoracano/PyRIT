@@ -183,7 +183,8 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_prompt_template: Optional per-turn template (``str`` or
                 ``SeedPrompt``) rendered each turn to wrap the feedback the
                 manager computes from the objective target's latest response
-                (receives ``feedback_text`` and ``objective``). Passes straight
+                (receives ``feedback_text``, ``objective`` and the turn
+                variables documented on ``DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE``). Passes straight
                 through to ``AttackAdversarialConfig.adversarial_prompt_template``;
                 when ``None`` the attack's own default is used. Combined with the
                 resolved target like ``adversarial_system_prompt``.

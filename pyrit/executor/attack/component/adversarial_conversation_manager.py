@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -19,8 +18,12 @@ from pyrit.exceptions import (
     EmptyResponseException,
     InvalidJsonException,
     PyritException,
-    execution_context,
     remove_markdown_json,
+)
+from pyrit.executor.attack.component.structured_role import (
+    StructuredRole,
+    build_json_prompt_metadata,
+    parse_json_object,
 )
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
@@ -30,7 +33,6 @@ from pyrit.executor.attack.core.attack_config import (
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import (
-    JsonResponseConfig,
     JsonSchemaDefinition,
     Message,
     MessagePiece,
@@ -38,9 +40,10 @@ from pyrit.models import (
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
+from pyrit.prompt_normalizer import PromptNormalizer
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
@@ -107,19 +110,6 @@ class _ResolvedAdversarialConfig:
     system_prompt: SeedPrompt
     first_message: SeedPrompt | None = None
     next_message_template: SeedPrompt | None = None
-
-
-def _camel_to_snake(name: str) -> str:
-    """
-    Convert a ``camelCase`` or ``PascalCase`` identifier to ``snake_case``.
-
-    Args:
-        name: The identifier to convert.
-
-    Returns:
-        The snake_case form of the identifier.
-    """
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 # Feedback strings for objective-target responses that carry no usable text.
@@ -282,23 +272,77 @@ def _build_adversarial_feedback_text(
     return _EMPTY_FEEDBACK_TEXT
 
 
-def _build_adversarial_prompt_metadata(*, response_json_schema: JsonSchemaDefinition | None) -> dict[str, Any]:
-    """
-    Build the adversarial-chat request metadata for an optional response schema.
+# Variables the manager always supplies to the per-turn template; caller-supplied template values
+# may not shadow them.
+_RESERVED_TEMPLATE_VARIABLES = frozenset(
+    {
+        "feedback_text",
+        "objective",
+        "turn_index",
+        "max_turns",
+        "response_text",
+        "response_blocked",
+        "response_errored",
+        "score_value",
+        "score_rationale",
+    }
+)
 
-    When a schema is declared, returns ``response_format`` plus the shared schema under
-    ``JSON_SCHEMA_METADATA_KEY`` so schema-aware targets can natively constrain the reply.
-    When no schema is declared, returns an empty dict so the raw-text behavior is unchanged.
+
+def _build_turn_template_values(
+    *,
+    objective: str | None,
+    turn_index: int,
+    max_turns: int,
+    feedback_text: str,
+    last_response: Message,
+    score: Score | None,
+    use_score_as_feedback: bool,
+    extra_values: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Build the variables the per-turn adversarial template is rendered with.
+
+    ``score_value`` and ``score_rationale`` follow ``use_score_as_feedback``: when it is disabled the
+    attacker must not see judge output, so both are None. They are also None when the turn was not
+    scored or the scorer reached no verdict.
 
     Args:
-        response_json_schema: The schema to forward, or None.
+        objective: The attack objective.
+        turn_index: Zero-based index of the current turn.
+        max_turns: Maximum number of turns for the attack.
+        feedback_text: The computed feedback text (see ``_build_adversarial_feedback_text``).
+        last_response: The objective target's latest response.
+        score: The score for ``last_response``, or None when the turn was not scored.
+        use_score_as_feedback: Whether judge output may be shown to the attacker.
+        extra_values: Attack-specific template variables, or None.
 
     Returns:
-        The prompt metadata dict (empty when no schema).
+        The template variables.
+
+    Raises:
+        ValueError: If ``extra_values`` shadows a variable the manager supplies.
     """
-    if response_json_schema is None:
-        return {}
-    return JsonResponseConfig(enabled=True, json_schema=response_json_schema).to_metadata()
+    shadowed = _RESERVED_TEMPLATE_VARIABLES & set(extra_values or {})
+    if shadowed:
+        raise ValueError(f"template_values may not override manager-supplied variables: {sorted(shadowed)}")
+
+    visible_score = score if use_score_as_feedback and score is not None and not score.is_undetermined else None
+    return {
+        **(extra_values or {}),
+        "feedback_text": feedback_text,
+        "objective": objective,
+        "turn_index": turn_index,
+        "max_turns": max_turns,
+        "response_text": _joined_text_value(last_response),
+        "response_blocked": any(piece.is_blocked() for piece in last_response.message_pieces),
+        "response_errored": last_response.is_error(),
+        "score_value": visible_score.get_value() if visible_score is not None else None,
+        "score_rationale": visible_score.score_rationale if visible_score is not None else None,
+    }
+
+
+_build_adversarial_prompt_metadata = build_json_prompt_metadata
 
 
 def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition | None = None) -> AdversarialReply:
@@ -329,30 +373,8 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
         InvalidJsonException: If the reply is not valid JSON, does not decode to an object, is
             missing a required key, carries a key the schema forbids, or has no usable ``next_message``.
     """
+    normalized = parse_json_object(response_text, schema=schema)
     cleaned = remove_markdown_json(response_text)
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise InvalidJsonException(message=f"Invalid JSON encountered: {cleaned}") from e
-
-    if not isinstance(parsed, dict):
-        raise InvalidJsonException(
-            message=(f"Adversarial-chat reply must be a JSON object, but decoded to {type(parsed).__name__}: {cleaned}")
-        )
-
-    normalized = {_camel_to_snake(key): value for key, value in parsed.items()}
-
-    if schema is not None:
-        required_keys = {_camel_to_snake(key) for key in schema.get("required", [])}
-        missing_keys = required_keys - normalized.keys()
-        if missing_keys:
-            raise InvalidJsonException(message=f"Missing required keys {missing_keys} in JSON response: {cleaned}")
-
-        if schema.get("additionalProperties", True) is False:
-            allowed_keys = {_camel_to_snake(key) for key in schema.get("properties", {})}
-            extra_keys = normalized.keys() - allowed_keys
-            if extra_keys:
-                raise InvalidJsonException(message=f"Unexpected keys {extra_keys} found in JSON response: {cleaned}")
 
     if _NEXT_MESSAGE_KEY not in normalized:
         raise InvalidJsonException(
@@ -589,6 +611,19 @@ class _AdversarialConversationManager:
                 "it is the field the attack loop sends to the objective target."
             )
 
+        schema = self._response_json_schema
+        self._role: StructuredRole[AdversarialReply] = StructuredRole(
+            target=adversarial_target,
+            parse=lambda response_text: _parse_adversarial_reply(response_text, schema=schema),
+            response_json_schema=schema,
+            component_role=ComponentRole.ADVERSARIAL_CHAT,
+            raise_for_error=_raise_for_adversarial_error,
+            prompt_normalizer=self._prompt_normalizer,
+            attack_strategy_name=attack_strategy_name,
+            objective=objective,
+            objective_target_conversation_id=objective_target_conversation_id,
+        )
+
     @property
     def adversarial_target(self) -> PromptTarget:
         """The adversarial chat target."""
@@ -674,25 +709,36 @@ class _AdversarialConversationManager:
             raise ValueError("No objective configured to render the first message")
         return template.render_template_value_silent(objective=self._objective)
 
-    def _render_adversarial_prompt(self, *, score: Score | None, last_response: Message) -> str:
+    def _render_adversarial_prompt(
+        self,
+        *,
+        turn_index: int,
+        score: Score | None,
+        last_response: Message,
+        template_values: Mapping[str, Any] | None = None,
+    ) -> str:
         """
         Render the per-turn adversarial prompt from the objective target's response and score.
 
         The blocked/error/empty/score-feedback branching is computed in Python via
-        ``_build_adversarial_feedback_text``; the resulting ``feedback_text`` (plus ``objective``)
-        is rendered into ``adversarial_prompt_template``. Rendering is strict, so a template that
-        references any other variable raises rather than silently producing empty output.
+        ``_build_adversarial_feedback_text``; the resulting ``feedback_text`` is rendered into
+        ``adversarial_prompt_template`` together with the variables from ``_build_turn_template_values``.
+        Rendering is strict, so a template that references any variable not supplied raises rather
+        than silently producing empty output.
 
         Args:
+            turn_index: Zero-based index of the current turn.
             score: The score for ``last_response``, or None when the turn was not scored.
             last_response: The objective target's latest response.
+            template_values: Attack-specific variables to make available to the template.
 
         Returns:
             The rendered adversarial-chat prompt text.
 
         Raises:
             ValueError: If no next-message template is configured (override mode should supply the
-                prompt text directly instead of calling this).
+                prompt text directly instead of calling this), or ``template_values`` shadows a
+                variable the manager supplies.
         """
         feedback_text = _build_adversarial_feedback_text(
             last_response=last_response,
@@ -703,8 +749,16 @@ class _AdversarialConversationManager:
         if self._adversarial_next_user_message is None:
             raise ValueError("No next-message template configured on the adversarial conversation manager")
         return self._adversarial_next_user_message.render_template_value(
-            feedback_text=feedback_text,
-            objective=self._objective,
+            **_build_turn_template_values(
+                objective=self._objective,
+                turn_index=turn_index,
+                max_turns=self._max_turns,
+                feedback_text=feedback_text,
+                last_response=last_response,
+                score=score,
+                use_score_as_feedback=self._use_score_as_feedback,
+                extra_values=template_values,
+            )
         )
 
     def _warn_if_response_media_dropped(self, *, last_response: Message, feedback_text: str) -> None:
@@ -748,6 +802,7 @@ class _AdversarialConversationManager:
         last_response: Message | None = None,
         score: Score | None = None,
         adversarial_prompt_text: str | None = None,
+        template_values: Mapping[str, Any] | None = None,
     ) -> AdversarialTurn:
         """
         Produce the next objective-target message for this adversarial conversation.
@@ -761,7 +816,8 @@ class _AdversarialConversationManager:
 
         * ``adversarial_prompt_text`` supplied (override mode) — used verbatim as the adversarial turn.
         * else ``last_response is None`` — the first user message is rendered from the objective.
-        * else — the next-message template is rendered with the computed per-turn feedback text.
+        * else — the next-message template is rendered with the computed per-turn feedback text and
+          the turn variables from ``_build_turn_template_values``.
 
         Objective message:
 
@@ -780,6 +836,9 @@ class _AdversarialConversationManager:
             score: The score for ``last_response``, or None when the turn was not scored.
             adversarial_prompt_text: Optional pre-built adversarial prompt text (override mode). When
                 supplied, the manager skips template rendering and sends this text.
+            template_values: Optional attack-specific variables (for example a refusal flag) made
+                available to the per-turn template alongside the manager-supplied ones. Names the
+                manager supplies cannot be overridden. Used only when the per-turn template renders.
 
         Returns:
             AdversarialTurn: The ready-to-send objective ``Message`` plus the parsed adversarial
@@ -805,7 +864,12 @@ class _AdversarialConversationManager:
         elif last_response is None:
             prompt_text = self._render_first_message()
         else:
-            prompt_text = self._render_adversarial_prompt(score=score, last_response=last_response)
+            prompt_text = self._render_adversarial_prompt(
+                turn_index=turn_index,
+                score=score,
+                last_response=last_response,
+                template_values=template_values,
+            )
 
         reply = await self._send_and_parse_async(
             prompt_text=prompt_text,
@@ -912,7 +976,7 @@ class _AdversarialConversationManager:
         Send one user turn to the adversarial chat and parse its reply.
 
         This is the single place adversarial-chat JSON retry lives. It delegates to
-        ``send_json_with_retry_async`` so each retry sends on a clean conversation history:
+        ``StructuredRole.send_async`` so each retry sends on a clean conversation history:
         the failed turn is rolled back out of memory before the turn is resent, instead of
         replaying the model's own malformed reply.
 
@@ -934,7 +998,7 @@ class _AdversarialConversationManager:
             ValueError: If no response is received from the adversarial chat.
             InvalidJsonException: If the reply is not valid JSON after the retry budget is exhausted.
         """
-        prompt_metadata = _build_adversarial_prompt_metadata(response_json_schema=self._response_json_schema)
+        prompt_metadata = build_json_prompt_metadata(response_json_schema=self._response_json_schema)
 
         if self._modality_router is not None:
             message = self._modality_router.build_adversarial_input_message(
@@ -944,29 +1008,6 @@ class _AdversarialConversationManager:
                 prompt_metadata=prompt_metadata or None,
             )
         else:
-            message = Message.from_prompt(
-                prompt=prompt_text,
-                role="user",
-                prompt_metadata=prompt_metadata or None,
-            )
+            message = self._role.build_message(prompt_text=prompt_text)
 
-        schema = self._response_json_schema
-
-        def _parse(response: Message) -> AdversarialReply:
-            _raise_for_adversarial_error(response)
-            return _parse_adversarial_reply(response.get_value(), schema=schema)
-
-        with execution_context(
-            component_role=ComponentRole.ADVERSARIAL_CHAT,
-            attack_strategy_name=self._attack_strategy_name,
-            component_identifier=self._adversarial_target.get_identifier(),
-            objective_target_conversation_id=self._objective_target_conversation_id,
-            objective=self._objective,
-        ):
-            return await send_json_with_retry_async(
-                normalizer=self._prompt_normalizer,
-                target=self._adversarial_target,
-                message=message,
-                conversation_id=self._conversation_id,
-                parse=_parse,
-            )
+        return await self._role.send_async(message=message, conversation_id=self._conversation_id)

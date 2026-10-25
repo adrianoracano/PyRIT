@@ -23,6 +23,8 @@ if TYPE_CHECKING:
         mark_messages_as_simulated,
     )
     from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
+    from pyrit.executor.attack.component.response_assessment import RefusalAssessor, TurnAssessment
+    from pyrit.executor.attack.component.structured_role import StructuredRole, parse_json_object
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_AdversarialConversationManager": "pyrit.executor.attack.component.adversarial_conversation_manager",
@@ -34,7 +36,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_adversarial_chat_messages": "pyrit.executor.attack.component.conversation_manager",
     "get_prepended_turn_count": "pyrit.executor.attack.component.conversation_manager",
     "mark_messages_as_simulated": "pyrit.executor.attack.component.conversation_manager",
+    "parse_json_object": "pyrit.executor.attack.component.structured_role",
     "PrependedConversationConfig": "pyrit.executor.attack.component.prepended_conversation_config",
+    "RefusalAssessor": "pyrit.executor.attack.component.response_assessment",
+    "StructuredRole": "pyrit.executor.attack.component.structured_role",
+    "TurnAssessment": "pyrit.executor.attack.component.response_assessment",
 }
 
 __all__ = list(_LAZY_EXPORTS)

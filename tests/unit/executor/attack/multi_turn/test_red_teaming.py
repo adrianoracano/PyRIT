@@ -25,7 +25,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig, TurnAssessment
 from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_FIRST_MESSAGE
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
@@ -2434,3 +2434,241 @@ class TestRedTeamingAdversarialIdentity:
         )
         attack._adversarial_chat = None
         assert attack.get_attack_adversarial_config() is None
+
+
+def _refusal_score(value: str) -> Score:
+    return Score(
+        score_type="true_false",
+        score_value=value,
+        score_category=["refusal"],
+        score_value_description="Refusal check",
+        score_rationale="refusal rationale",
+        score_metadata={},
+        message_piece_id=str(uuid.uuid4()),
+        scorer_class_identifier=_mock_scorer_id("MockRefusalScorer"),
+    )
+
+
+@pytest.fixture
+def mock_refusal_scorer() -> MagicMock:
+    scorer = MagicMock(spec=TrueFalseScorer)
+    scorer.score_async = AsyncMock(return_value=[_refusal_score("true")])
+    scorer.get_identifier.return_value = _mock_scorer_id("MockRefusalScorer")
+    return scorer
+
+
+def _attack_with_refusal_scorer(
+    *,
+    objective_target: MagicMock,
+    adversarial_chat: MagicMock,
+    objective_scorer: MagicMock,
+    prompt_normalizer: MagicMock,
+    refusal_scorer: MagicMock | None,
+    max_turns: int = 2,
+) -> RedTeamingAttack:
+    return RedTeamingAttack(
+        objective_target=objective_target,
+        attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
+        attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer, refusal_scorer=refusal_scorer),
+        prompt_normalizer=prompt_normalizer,
+        max_turns=max_turns,
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestRefusalAssessment:
+    def test_refusal_scorer_is_accepted_without_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_refusal_scorer: MagicMock,
+    ):
+        _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=mock_refusal_scorer,
+        )
+
+        assert "refusal_scorer" not in caplog.text
+
+    def test_scoring_config_reports_the_refusal_scorer(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_refusal_scorer: MagicMock,
+    ):
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=mock_refusal_scorer,
+        )
+
+        config = attack.get_attack_scoring_config()
+
+        assert config is not None
+        assert config.refusal_scorer is mock_refusal_scorer
+
+    async def test_each_turn_is_assessed_against_the_prompt_sent(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_refusal_scorer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+        failure_score: Score,
+    ):
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=mock_refusal_scorer,
+        )
+
+        with (
+            patch.object(
+                attack,
+                "_generate_next_prompt_async",
+                new_callable=AsyncMock,
+                return_value=Message.from_prompt(prompt="the prompt", role="user"),
+            ),
+            patch.object(
+                attack,
+                "_send_prompt_to_objective_target_async",
+                new_callable=AsyncMock,
+                return_value=sample_response,
+            ),
+            patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score),
+        ):
+            await attack._perform_async(context=basic_context)
+
+        assert mock_refusal_scorer.score_async.call_count == 2
+        assert mock_refusal_scorer.score_async.call_args.kwargs["expectation"].objective == "the prompt"
+        assert basic_context.last_assessment is not None
+        assert basic_context.last_assessment.is_refusal is True
+
+    async def test_without_a_refusal_scorer_nothing_is_assessed(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+        failure_score: Score,
+    ):
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=None,
+        )
+
+        with (
+            patch.object(
+                attack,
+                "_generate_next_prompt_async",
+                new_callable=AsyncMock,
+                return_value=Message.from_prompt(prompt="the prompt", role="user"),
+            ),
+            patch.object(
+                attack,
+                "_send_prompt_to_objective_target_async",
+                new_callable=AsyncMock,
+                return_value=sample_response,
+            ),
+            patch.object(attack, "_score_response_async", new_callable=AsyncMock, return_value=failure_score),
+        ):
+            await attack._perform_async(context=basic_context)
+
+        assert basic_context.last_assessment is None
+
+    async def test_refusal_scorer_failure_aborts_the_attack(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_refusal_scorer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+        sample_response: Message,
+    ):
+        mock_refusal_scorer.score_async.side_effect = RuntimeError("scorer down")
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=mock_refusal_scorer,
+        )
+
+        with (
+            patch.object(
+                attack,
+                "_generate_next_prompt_async",
+                new_callable=AsyncMock,
+                return_value=Message.from_prompt(prompt="the prompt", role="user"),
+            ),
+            patch.object(
+                attack,
+                "_send_prompt_to_objective_target_async",
+                new_callable=AsyncMock,
+                return_value=sample_response,
+            ),
+            pytest.raises(RuntimeError, match="scorer down"),
+        ):
+            await attack._perform_async(context=basic_context)
+
+    def test_template_values_are_unassessed_before_any_turn(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+    ):
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=None,
+        )
+
+        assert attack._build_template_values(context=basic_context) == {"was_refusal": None}
+
+    async def test_was_refusal_reaches_the_adversarial_template(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_refusal_scorer: MagicMock,
+        basic_context: MultiTurnAttackContext,
+    ):
+        attack = _attack_with_refusal_scorer(
+            objective_target=mock_objective_target,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+            prompt_normalizer=mock_prompt_normalizer,
+            refusal_scorer=mock_refusal_scorer,
+        )
+        basic_context.last_assessment = TurnAssessment(refusal_score=_refusal_score("true"))
+        manager = MagicMock()
+        manager.get_next_message_async = AsyncMock(return_value=MagicMock())
+
+        await attack._generate_next_prompt_async(context=basic_context, adversarial_manager=manager)
+
+        assert manager.get_next_message_async.call_args.kwargs["template_values"] == {"was_refusal": True}

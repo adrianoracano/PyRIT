@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.component.prepended_conversation_config import (
         PrependedConversationConfig,
     )
+    from pyrit.executor.attack.component.response_assessment import TurnAssessment
     from pyrit.models import (
         Message,
         Score,
@@ -66,6 +67,9 @@ class MultiTurnAttackContext(AttackContext[AttackParamsT]):
 
     # Score assigned to the latest response by a scorer component
     last_score: Score | None = None
+
+    # What the attack learned about the latest response apart from the objective score, if it assesses
+    last_assessment: TurnAssessment | None = None
 
 
 class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, AttackStrategyResultT], ABC):

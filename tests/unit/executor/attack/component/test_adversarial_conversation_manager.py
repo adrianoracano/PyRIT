@@ -3,7 +3,6 @@
 
 import json
 import logging
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,6 +38,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoreStatus,
     SeedPrompt,
     get_common_json_schema,
 )
@@ -543,8 +543,9 @@ class TestGetNextMessageAsync:
             use_score_as_feedback=True,
             prompt_normalizer=normalizer,
         )
-        score = SimpleNamespace(score_value="true", score_rationale="because")
-        await manager.get_next_message_async(turn_index=1, score=score, last_response=_response_message("target text"))
+        await manager.get_next_message_async(
+            turn_index=1, score=_feedback_score("because"), last_response=_response_message("target text")
+        )
         sent = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent.message_pieces[0].converted_value == "OBJ=my objective|FB=target text\n\nbecause"
 
@@ -1023,6 +1024,128 @@ def test_adversarial_reply_is_message_constructible():
     reply = _parse_adversarial_reply(VALID_JSON, schema=SCHEMA)
     message = Message.from_prompt(prompt=reply.next_message, role="user")
     assert message.get_value() == "hello target"
+
+
+# --- per-turn template variables ---------------------------------------------
+
+_TEMPLATE_VARIABLES = (
+    "turn={{ turn_index }}/{{ max_turns }}|text={{ response_text }}|blocked={{ response_blocked }}"
+    "|errored={{ response_errored }}|score={{ score_value }}|why={{ score_rationale }}"
+)
+
+
+def _scored(score_type: str, score_value: str | None, *, status: ScoreStatus = ScoreStatus.COMPLETE) -> Score:
+    return Score(
+        score_type=score_type,
+        score_value=score_value,
+        status=status,
+        score_category=["test"],
+        score_value_description="d",
+        score_rationale="because",
+        score_metadata={},
+        message_piece_id="00000000-0000-0000-0000-000000000000",
+    )
+
+
+async def _rendered_prompt(
+    *,
+    template: str = _TEMPLATE_VARIABLES,
+    last_response: Message | None = None,
+    score: Score | None = None,
+    use_score_as_feedback: bool = True,
+    template_values: dict | None = None,
+    max_turns: int = 7,
+) -> str:
+    normalizer = _normalizer(VALID_JSON)
+    manager = _manager(
+        adversarial_next_user_message=_per_turn(template),
+        max_turns=max_turns,
+        use_score_as_feedback=use_score_as_feedback,
+        prompt_normalizer=normalizer,
+    )
+    await manager.get_next_message_async(
+        turn_index=3,
+        last_response=last_response or _response_message("target text"),
+        score=score,
+        template_values=template_values,
+    )
+    return normalizer.send_prompt_async.call_args.kwargs["message"].message_pieces[0].converted_value
+
+
+class TestTurnTemplateVariables:
+    async def test_turn_budget_and_response_variables(self):
+        prompt = await _rendered_prompt()
+
+        assert prompt == "turn=3/7|text=target text|blocked=False|errored=False|score=None|why=None"
+
+    async def test_true_false_score_is_exposed_as_bool(self):
+        prompt = await _rendered_prompt(score=_scored("true_false", "true"))
+
+        assert "score=True|why=because" in prompt
+
+    async def test_float_score_is_exposed_as_float(self):
+        prompt = await _rendered_prompt(score=_scored("float_scale", "0.4"))
+
+        assert "score=0.4|why=because" in prompt
+
+    async def test_score_is_hidden_when_score_feedback_is_disabled(self):
+        prompt = await _rendered_prompt(score=_scored("true_false", "true"), use_score_as_feedback=False)
+
+        assert "score=None|why=None" in prompt
+
+    async def test_undetermined_score_is_hidden(self):
+        score = _scored("true_false", None, status=ScoreStatus.UNDETERMINED)
+
+        prompt = await _rendered_prompt(score=score)
+
+        assert "score=None|why=None" in prompt
+
+    async def test_response_text_excludes_score_rationale(self):
+        prompt = await _rendered_prompt(template="{{ response_text }}", score=_scored("true_false", "false"))
+
+        assert prompt == "target text"
+
+    async def test_blocked_response_is_flagged(self):
+        blocked = _response_message("filtered", data_type="error", error="blocked")
+
+        prompt = await _rendered_prompt(last_response=blocked)
+
+        assert "blocked=True" in prompt
+        assert "errored=True" in prompt
+
+    async def test_errored_response_is_flagged_but_not_blocked(self):
+        errored = _response_message("boom", data_type="error", error="unknown")
+
+        prompt = await _rendered_prompt(last_response=errored)
+
+        assert "blocked=False|errored=True" in prompt
+
+    async def test_caller_supplied_template_values_are_available(self):
+        prompt = await _rendered_prompt(template="refused={{ was_refusal }}", template_values={"was_refusal": True})
+
+        assert prompt == "refused=True"
+
+    async def test_caller_supplied_values_cannot_shadow_manager_variables(self):
+        with pytest.raises(ValueError, match="turn_index"):
+            await _rendered_prompt(template_values={"turn_index": 99})
+
+    async def test_unknown_variable_still_raises(self):
+        with pytest.raises(ValueError, match="Error rendering template"):
+            await _rendered_prompt(template="{{ not_supplied }}")
+
+    async def test_override_prompt_text_ignores_template_values(self):
+        normalizer = _normalizer(VALID_JSON)
+        manager = _manager(adversarial_next_user_message=None, prompt_normalizer=normalizer)
+
+        await manager.get_next_message_async(
+            turn_index=1,
+            last_response=_response_message(),
+            adversarial_prompt_text="verbatim",
+            template_values={"turn_index": 99},
+        )
+
+        sent = normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert sent.message_pieces[0].converted_value == "verbatim"
 
 
 # --- feedback text -----------------------------------------------------------

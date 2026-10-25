@@ -14,6 +14,7 @@ from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+from pyrit.executor.attack.component.response_assessment import RefusalAssessor
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
@@ -34,14 +35,12 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
-    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
-    MessageScorable,
     NumericRubric,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
@@ -218,6 +217,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         self._refusal_scorer = attack_scoring_config.refusal_scorer or SelfAskRefusalScorer(
             chat_target=attack_adversarial_config.target,
         )
+        self._refusal_assessor = RefusalAssessor(refusal_scorer=self._refusal_scorer)
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -683,18 +683,14 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if not context.last_response:
             raise ValueError("No response available in context to check for refusal")
 
-        with execution_context(
-            component_role=ComponentRole.REFUSAL_SCORER,
+        assessment = await self._refusal_assessor.assess_async(
+            response=context.last_response,
+            prompt_sent=objective,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._refusal_scorer.get_identifier(),
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
-        ):
-            scores = await self._refusal_scorer.score_async(
-                scorable=MessageScorable.from_message(context.last_response),
-                expectation=ScoringExpectation(objective=objective),
-            )
-        return scores[0]
+        )
+        return assessment.refusal_score
 
     async def _score_response_async(self, *, context: CrescendoAttackContext) -> Score:
         """
